@@ -1,13 +1,13 @@
 import os
-import numpy as np
 import random
-import matplotlib.pyplot as plt
+from math import ceil
+
 import matplotlib
+import matplotlib.pyplot as plt
+import numpy as np
 from matplotlib.ticker import AutoMinorLocator
-from TemplateFiles.generate_template import generate_template
-from math import ceil 
 from PIL import Image
-import csv
+from TemplateFiles.generate_template import generate_template
 
 standard_values = {'y_grid_size' : 0.5,
                    'x_grid_size' : 0.2,

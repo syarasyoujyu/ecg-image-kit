@@ -1,10 +1,7 @@
 import os
+from datetime import date
+
 import wfdb
-import random
-from PIL import Image, ImageDraw, ImageFont
-import matplotlib.pyplot as plt
-from datetime import date, timedelta
-import numpy as np
 
 test_date1 = date(1940, 1, 1)
 

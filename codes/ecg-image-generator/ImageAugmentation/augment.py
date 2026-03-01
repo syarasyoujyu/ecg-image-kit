@@ -1,20 +1,19 @@
-import imageio, json
-from PIL import Image
 import argparse
-import imgaug as ia
-from imgaug import augmenters as iaa
-from imgaug.augmentables.bbs import BoundingBox, BoundingBoxesOnImage
-from helper_functions import read_leads, convert_bounding_boxes_to_dict, rotate_bounding_box, get_lead_pixel_coordinate, rotate_points
-import numpy as np
-import matplotlib.pyplot as plt
-import os, sys, argparse
-import numpy as np
-from scipy.io import savemat, loadmat
-import matplotlib.pyplot as plt
-from matplotlib.ticker import AutoMinorLocator
-from math import ceil 
-import time
+import os
 import random
+
+import matplotlib.pyplot as plt
+import numpy as np
+from helper_functions import (
+    convert_bounding_boxes_to_dict,
+    read_leads,
+    rotate_bounding_box,
+    rotate_points,
+)
+from imgaug import augmenters as iaa
+from imgaug.augmentables.bbs import BoundingBoxesOnImage
+from PIL import Image
+
 
 def get_parser():
     parser = argparse.ArgumentParser()
@@ -72,6 +71,8 @@ def get_augment(input_file,output_directory,rotate=25,noise=25,crop=0.01,tempera
 
     if bbox or store_text_bounding_box:
         json_dict['leads'] = convert_bounding_boxes_to_dict(augmented_lead_bbs, augmented_leadName_bbs, lead_bbs_labels, startTime_bbs, endTime_bbs, rotated_pixel_coordinates)
+    if json_dict is not None:
+        json_dict['rotate_applied'] = rot
 
     head, tail = os.path.split(filename)
 
@@ -79,4 +80,3 @@ def get_augment(input_file,output_directory,rotate=25,noise=25,crop=0.01,tempera
     plt.imsave(fname=f,arr=images_aug[0])
 
     return f
-

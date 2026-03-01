@@ -1,25 +1,20 @@
-import pickle
 import argparse
-import numpy as np
-import pandas as pd
-import tensorflow as tf
+import os
+import pickle
+import random
+from collections import namedtuple
+from sys import platform
+
 import matplotlib
 import matplotlib.pyplot as plt
-import matplotlib.cm as cm
-import matplotlib.mlab as mlab
-from PIL import Image
-import seaborn
-from collections import namedtuple
-import spacy
-import os, sys, argparse
-from sys import platform
+import numpy as np
 import requests
-from bs4 import BeautifulSoup, Comment
+import spacy
+import tensorflow as tf
 import validators
-import random
-import cv2
-import sys
-import time
+from bs4 import BeautifulSoup, Comment
+from PIL import Image
+
 
 def get_parser():
     description = 'Create a corpus for medical corpus'

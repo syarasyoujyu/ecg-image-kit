@@ -1,17 +1,20 @@
-import os, sys, argparse, json
-import random
+import argparse
 import csv
-import qrcode
-from PIL import Image
+import json
+import os
+import random
+import sys
+import warnings
+
 import numpy as np
-from scipy.stats import bernoulli
-from helper_functions import find_files
+import qrcode
+from CreasesWrinkles.creases import get_creased
 from extract_leads import get_paper_ecg
 from HandwrittenText.generate import get_handwritten
-from CreasesWrinkles.creases import get_creased
-from ImageAugmentation.augment import get_augment
-import warnings
 from helper_functions import read_config_file
+from ImageAugmentation.augment import get_augment
+from PIL import Image
+from scipy.stats import bernoulli
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2' 
 warnings.filterwarnings("ignore")
@@ -214,6 +217,7 @@ def run_single_file(args):
                 json_dict['crop'] = crop
                 json_dict['temperature'] = temp
                 json_dict['rotate'] = rotate
+                json_dict['rotate_applied'] = json_dict.get('rotate_applied', 0)
                 json_dict['noise'] = noise
 
             if args.store_config:

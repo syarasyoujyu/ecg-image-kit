@@ -1,11 +1,10 @@
-import os, sys, argparse, yaml, math
+import math
+import os
+
 import numpy as np
-from scipy.io import savemat, loadmat
-import matplotlib.pyplot as plt
-from matplotlib.ticker import AutoMinorLocator
-from math import ceil 
 import wfdb
-from imgaug import augmenters as iaa
+import yaml
+from scipy.io import loadmat
 
 BIT_NAN_16 = -(2.**15)
 

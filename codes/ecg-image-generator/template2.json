@@ -66,5 +66,6 @@
     "crop": 0,
     "temp": 0,
     "rotate": 0,
+    "rotate_applied": 0,
     "noise": 0
 }

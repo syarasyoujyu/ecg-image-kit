@@ -1,9 +1,11 @@
-import os, sys, argparse
+import argparse
+import os
 import random
-import csv
-from helper_functions import find_records
-from gen_ecg_image_from_data import run_single_file
+import sys
 import warnings
+
+from gen_ecg_image_from_data import run_single_file
+from helper_functions import find_records
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2' 
 warnings.filterwarnings("ignore")
