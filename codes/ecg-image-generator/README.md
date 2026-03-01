@@ -20,13 +20,15 @@ The process of scanning and digitizing ECG images is governed by some fundamenta
           ```
           pip install -r requirements.txt
           ```
-     2. If you will be using the handwritten text distortions feature, install [sciSpacy](https://github.com/allenai/scispacy) with the following command:
+     2. If you will be using the handwritten text distortions feature and want biomedical entity extraction, install [sciSpacy](https://github.com/allenai/scispacy) with the following command:
 
           ```
           pip install https://s3-us-west-2.amazonaws.com/ai2-s2-scispacy/releases/v0.5.0/en_core_sci_sm-0.5.0.tar.gz
           ```
-          
-          Note that the requirements file has been compiled for python versions >= 3.9 and < 3.11
+
+          If `en_core_sci_sm` is not installed, the code falls back to a regex-based term picker.
+
+          The handwritten text augmentation no longer depends on TensorFlow.
 
 
 ## Running the pipeline
@@ -86,7 +88,7 @@ The basic mode of the tool creates ECG images without distortions. The mode of o
 
      For NLP, we utilized the Python-based `en_core_sci_md` model from [sciSpacy](https://github.com/allenai/scispacy) for tokenization, parts of speech tagging, dependency parsing, and named entity recognition. The [SpaCy model](https://sentometrics-research.com/publication/72/) was retrained with our medical texts, focusing on ECG and cardiocascular context. We also retrained the dependency parser and parts of speech tagger using the McClosky and Charniak treebank, based on the GENIA 1.0 corpus.
 
-     Our toolbox generates synthetic ECG images by parsing words from text files or online sources using the [BeautifulSoup library](https://www.crummy.com/software/BeautifulSoup/bs4/doc/), tagging them, and identifying ECG-related keywords with named entity recognition. These keywords are then converted into handwritten text using a pretrained Recurrent Neural Network (RNN) transducer-based model with a soft window.
+     Our toolbox generates synthetic ECG images by parsing words from text files or online sources using the [BeautifulSoup library](https://www.crummy.com/software/BeautifulSoup/bs4/doc/), tagging them, and identifying ECG-related keywords with named entity recognition. These keywords are then rendered into handwritten-like text overlays and composited onto the ECG image.
 
      Adding the `--hw_text` flag to the python command provides this feature. Furthermore, following attributes specific to the text can be adjusted: 
 

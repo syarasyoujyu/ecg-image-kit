@@ -1,261 +1,282 @@
 import argparse
 import os
-import pickle
 import random
-from collections import namedtuple
+import re
+from pathlib import Path
 from sys import platform
+from typing import Iterable
 
-import matplotlib
-import matplotlib.pyplot as plt
 import numpy as np
 import requests
-import spacy
-import tensorflow as tf
-import validators
 from bs4 import BeautifulSoup, Comment
-from PIL import Image
+from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
+
+try:
+    import spacy
+except ImportError:  # pragma: no cover - optional dependency
+    spacy = None
+
+try:
+    import validators
+except ImportError:  # pragma: no cover - optional dependency
+    validators = None
+
+
+MEDICAL_TERMS = {
+    "ecg",
+    "ekg",
+    "sinus",
+    "rhythm",
+    "arrhythmia",
+    "tachycardia",
+    "bradycardia",
+    "afib",
+    "flutter",
+    "stemi",
+    "nstemi",
+    "ischemia",
+    "infarction",
+    "ventricular",
+    "atrial",
+    "bundle",
+    "block",
+    "axis",
+    "deviation",
+    "hypertrophy",
+    "qrs",
+    "pr",
+    "qt",
+    "qtc",
+    "twave",
+    "troponin",
+    "lead",
+    "leads",
+    "paced",
+    "pacemaker",
+    "myocardial",
+    "cardiac",
+    "cardiomyopathy",
+    "palpitation",
+    "murmur",
+    "syncope",
+    "chest",
+    "pain",
+    "acute",
+    "normal",
+    "abnormal",
+}
 
 
 def get_parser():
-    description = 'Create a corpus for medical corpus'
+    description = "Create handwritten-like text overlays for ECG images"
     parser = argparse.ArgumentParser(description=description)
-    parser.add_argument('-l', '--link', type=str, required=True)
-    parser.add_argument('-n','--num_words',type=int,required=True)
-    parser.add_argument('-x_offset',dest='x_offset',type=int,default = 0)
-    parser.add_argument('-y_offset',dest='y_offset',type=int,default = 0)
-    parser.add_argument('-hws',dest='handwriting_size_factor',type=float,default = 0.2)
-    parser.add_argument('-s',dest='source_dir',type=str,required=True)
-    parser.add_argument('-i',dest='input_file',type=str,required=True)
-    parser.add_argument('-o',dest='output_dir',type=str,required=True)
-    parser.add_argument('--model', dest='model_path', type=str, default=os.path.join(os.path.join('HandwrittenText','pretrained'), 'model-29'))
-    parser.add_argument('--text', dest='text', type=str, default=None)
-    parser.add_argument('--style', dest='style', type=int, default=None)
-    parser.add_argument('--bias', dest='bias', type=float, default=1.)
-    parser.add_argument('--force', dest='force', action='store_true', default=False)
-    parser.add_argument('--animation', dest='animation', action='store_true', default=False)
-    parser.add_argument('--noinfo', dest='info', action='store_false', default=True)
-    parser.add_argument('--save', dest='save', type=str, default=None)
-    
+    parser.add_argument("-l", "--link", type=str, required=True)
+    parser.add_argument("-n", "--num_words", type=int, required=True)
+    parser.add_argument("-x_offset", dest="x_offset", type=int, default=0)
+    parser.add_argument("-y_offset", dest="y_offset", type=int, default=0)
+    parser.add_argument("-hws", dest="handwriting_size_factor", type=float, default=0.2)
+    parser.add_argument("-s", dest="source_dir", type=str, required=True)
+    parser.add_argument("-i", dest="input_file", type=str, required=True)
+    parser.add_argument("-o", dest="output_dir", type=str, required=True)
+    parser.add_argument("--model", dest="model_path", type=str, default=None)
+    parser.add_argument("--text", dest="text", type=str, default=None)
+    parser.add_argument("--style", dest="style", type=int, default=None)
+    parser.add_argument("--bias", dest="bias", type=float, default=1.0)
+    parser.add_argument("--force", dest="force", action="store_true", default=False)
+    parser.add_argument("--animation", dest="animation", action="store_true", default=False)
+    parser.add_argument("--noinfo", dest="info", action="store_false", default=True)
+    parser.add_argument("--save", dest="save", type=str, default=None)
     return parser
 
 
-#Sample random from a multivariate normal
-def sample(e, mu1, mu2, std1, std2, rho):
-    cov = np.array([[std1 * std1, std1 * std2 * rho],
-                    [std1 * std2 * rho, std2 * std2]])
-    mean = np.array([mu1, mu2])
+def _is_url(value: str) -> bool:
+    if not value:
+        return False
+    if validators is not None:
+        return bool(validators.url(value))
+    return value.startswith(("http://", "https://"))
 
-    x, y = np.random.multivariate_normal(mean, cov)
-    end = np.random.binomial(1, e)
-    return np.array([x, y, end])
 
-#Plot the handwriting
-def split_strokes(points):
-    points = np.array(points)
-    strokes = []
-    b = 0
-    #Traverse through the handwritten text points and plot strokes
-    for e in range(len(points)):
-        if points[e, 2] == 1.:
-            strokes += [points[b: e + 1, :2].copy()]
-            b = e + 1
-    return strokes
+def _load_text_source(link: str) -> str:
+    if _is_url(link):
+        response = requests.get(link, timeout=15)
+        response.raise_for_status()
 
-#Get cumulative sum of points
-def cumsum(points):
-    sums = np.cumsum(points[:, :2], axis=0)
-    return np.concatenate([sums, points[:, 2:]], axis=1)
+        parser = "html5lib" if platform == "darwin" else "lxml"
+        soup = BeautifulSoup(response.content, parser)
+        body = soup.body or soup
+        chunks = []
+        for text in body.find_all(string=True):
+            if text.parent.name in ["script", "meta", "link", "style"]:
+                continue
+            if isinstance(text, Comment):
+                continue
+            stripped = text.strip()
+            if stripped:
+                chunks.append(stripped)
+        return " ".join(chunks)
 
-#Code snippet from https://github.com/Grzego/handwriting-generation
-def sample_text(sess, args_text, translation, force,bias,style=None):
-    fields = ['coordinates', 'sequence', 'bias', 'e', 'pi', 'mu1', 'mu2', 'std1', 'std2',
-              'rho', 'window', 'kappa', 'phi', 'finish', 'zero_states']
-    vs = namedtuple('Params', fields)(
-        *[tf.compat.v1.get_collection(name)[0] for name in fields]
-    )
+    if not link:
+        link = "HandwrittenText/Biomedical.txt"
 
-    text = np.array([translation.get(c, 0) for c in args_text])
-    coord = np.array([0., 0., 1.])
-    coords = [coord]
+    with open(link, "r") as file:
+        return " ".join(line.strip() for line in file if line.strip())
 
-    # Prime the model with the author style if requested
-    prime_len, style_len = 0, 0
-    if style is not None:
-        # Priming consist of joining to a real pen-position and character sequences the synthetic sequence to generate
-        #   and set the synthetic pen-position to a null vector (the positions are sampled from the MDN)
-        style_coords, style_text = style
-        prime_len = len(style_coords)
-        style_len = len(style_text)
-        prime_coords = list(style_coords)
-        coord = prime_coords[0] # Set the first pen stroke as the first element to process
-        text = np.r_[style_text, text] # concatenate on 1 axis the prime text + synthesis character sequence
-        sequence_prime = np.eye(len(translation), dtype=np.float32)[style_text]
-        sequence_prime = np.expand_dims(np.concatenate([sequence_prime, np.zeros((1, len(translation)))]), axis=0)
 
-    sequence = np.eye(len(translation), dtype=np.float32)[text]
-    sequence = np.expand_dims(np.concatenate([sequence, np.zeros((1, len(translation)))]), axis=0)
+def _extract_with_spacy(text: str) -> list[str]:
+    if spacy is None:
+        return []
 
-    phi_data, window_data, kappa_data, stroke_data = [], [], [], []
-    sess.run(vs.zero_states)
-    sequence_len = len(args_text) + style_len
-    for s in range(1, 60 * sequence_len + 1):
-        is_priming = s < prime_len
-        e, pi, mu1, mu2, std1, std2, rho, \
-        finish, phi, window, kappa = sess.run([vs.e, vs.pi, vs.mu1, vs.mu2,
-                                               vs.std1, vs.std2, vs.rho, vs.finish,
-                                               vs.phi, vs.window, vs.kappa],
-                                              feed_dict={
-                                                  vs.coordinates: coord[None, None, ...],
-                                                  vs.sequence: sequence_prime if is_priming else sequence,
-                                                  vs.bias: bias
-                                              })
-
-        if is_priming:
-            # Use the real coordinate if priming
-            coord = prime_coords[s]
-        else:
-            # Synthesis mode
-            phi_data += [phi[0, :]]
-            window_data += [window[0, :]]
-            kappa_data += [kappa[0, :]]
-            # ---
-            g = np.random.choice(np.arange(pi.shape[1]), p=pi[0])
-            coord = sample(e[0, 0], mu1[0, g], mu2[0, g],
-                           std1[0, g], std2[0, g], rho[0, g])
-            coords += [coord]
-            stroke_data += [[mu1[0, g], mu2[0, g], std1[0, g], std2[0, g], rho[0, g], coord[2]]]
-
-            if not force and finish[0, 0] > 0.8:
-                break
-
-    coords = np.array(coords)
-    coords[-1, 2] = 1.
-
-    return phi_data, window_data, kappa_data, stroke_data, coords
-
-#Main function to add handwritten text to ecg
-def get_handwritten(link,num_words,input_file,output_dir,x_offset=0,y_offset=0,handwriting_size_factor=0.2,model_path=os.path.join(os.path.join('HandwrittenText','pretrained'), 'model-29'),text=None,style=None,bias=1.,force=False,animation=False,noinfo=True,save=None,bbox= False):
-    #Use 'Agg' mode to prevent accumulation of figures
-    matplotlib.use("Agg")
-    filename = input_file
-    
-    #Extract n medical terms
-    if(validators.url(link)):
-        #Parse URL
-        r = requests.get(link)
-
-        if platform == "darwin":
-            soup = BeautifulSoup(r.content, "html5lib")
-
-        else:
-            soup = BeautifulSoup(r.content, "lxml")
-
-        medicalText = ""
-        for text in soup.body.find_all(string=True):
-            if text.parent.name not in ['script', 'meta', 'link', 'style'] and not isinstance(text, Comment) and text != '\n':
-                medicalText = medicalText + text.strip()
-        #Extract medical terms using space biomedical library
+    try:
         nlp = spacy.load("en_core_sci_sm")
-        doc = nlp(medicalText)
-    else:
-        #Extract medical terms from .txt files
-        if link == '':
-            link = 'HandwrittenText/Biomedical.txt'
-        with open(link, 'r') as f:
-        #Extract lines from the file
-            text = ""
-            for line in f.readlines():
-                text = text + " " + line
-            #Extract medical terms using biomedical library
-        nlp = spacy.load("en_core_sci_sm")
-        doc = nlp(text)
-        #Choose n random words from the extracted list
-    words = random.choices(doc.ents,k=num_words)
+    except Exception:
+        return []
 
-        #Load the pretrained RNN model for handwritten text generation
-    with open(os.path.join(os.path.join('HandwrittenText','data'), 'translation.pkl'), 'rb') as file:
-        translation = pickle.load(file)
-    rev_translation = {v: k for k, v in translation.items()}
-    charset = [rev_translation[i] for i in range(len(rev_translation))]
-    charset[0] = ''
+    doc = nlp(text)
+    entities = []
+    for ent in doc.ents:
+        normalized = re.sub(r"\s+", " ", ent.text.strip())
+        if normalized:
+            entities.append(normalized)
+    return entities
 
-    #Configure machine
-    config = tf.compat.v1.ConfigProto(
-        device_count={'GPU': 0}
-    )
-    #Create session 
-    with tf.compat.v1.Session(config=config) as sess:
-        saver = tf.compat.v1.train.import_meta_graph(model_path + '.meta')
-        saver.restore(sess, model_path)
-        #Generate n handwritten words from the selected words
-        numw = len(words)
-        fig, ax = plt.subplots(numw, 1)
-        i=0
 
-        #Iterate through the words and select style file
-        for text in words:
-            med_text = str(text)
-            style = None
-            if style is not None:
-                style = None
-                with open(os.path.join(os.path.join('HandwrittenText','data'), 'styles.pkl'), 'rb') as file:
-                    styles = pickle.load(file)
-                if style > len(styles[0]):
-                    raise ValueError('Requested style is not in style list')
-                style = [styles[0][style], styles[1][style]]
-            phi_data, window_data, kappa_data, stroke_data, coords = sample_text(sess, med_text, translation, force,bias, style)
-            #Plot strokes of handwritten text
-            strokes = np.array(stroke_data)
-            strokes[:, :2] = np.cumsum(strokes[:, :2], axis=0)
+def _extract_with_regex(text: str) -> list[str]:
+    tokens = re.findall(r"[A-Za-z][A-Za-z0-9\-_/]{1,}", text.lower())
+    candidates = []
+    for token in tokens:
+        if token in MEDICAL_TERMS or len(token) >= 6:
+            candidates.append(token)
+    return candidates
 
-            #Generate subplots for each handwritten text
-            for stroke in split_strokes(cumsum(np.array(coords))):
-                ax[i].plot(stroke[:, 0], -stroke[:, 1])
-            ax[i].set_aspect('equal')
-            ax[i].set_axis_off()
-            i=i+1
-            #Save the plot as HandwrittenText.png
-        fig.savefig('HandwrittenText.png',dpi=1200)
-        img_path = filename
-        file_head,file_tail = os.path.splitext(filename)
-        boxed_file = file_head + '-boxed' + file_tail
-                
-        #Load the ecg image
-        img_ecg = Image.open(img_path)
-        #Convert from RGBA to RGB
-        img_ecg = img_ecg.convert('RGB')
-        #Load the generated handwritten text image
-        img_handwritten = Image.open('HandwrittenText.png')
-        #Convert the generated handwritten text image to RGB
-        img_handwritten = img_handwritten.convert('RGB')
-        #Resize the handwritten text image
-        img_length = int(np.floor(img_ecg.size[0] * handwriting_size_factor))
-        img_width = int(np.floor(img_ecg.size[1] * handwriting_size_factor))
-        
-        #Load handwritten text image into a numpy array
-        img_handwritten = img_handwritten.resize((img_length,img_width))
-        img_handwritten = np.asarray(img_handwritten).copy()
-        #Convert to a black and white image mask
-        img_handwritten[img_handwritten[:,:,1]!=255] = 0 
-        img_handwritten[img_handwritten==255] = 1
-        #Convert to an array
-        img_handwritten =  np.asarray(img_handwritten).copy()
-        img_ecg = np.asarray(img_ecg).copy()
-        #Shift the handwritten text by specified offset
-        img_cropped = img_ecg[x_offset:img_handwritten.shape[0]+x_offset,y_offset:img_handwritten.shape[1]+y_offset,:img_handwritten.shape[2]] * img_handwritten
-        #Apply cropped image
-        img_ecg[x_offset:img_handwritten.shape[0]+x_offset,y_offset:img_handwritten.shape[1]+y_offset,:img_handwritten.shape[2]] = img_cropped
-        #Save final image
-        img_final = Image.fromarray(img_ecg)
-        head, tail = os.path.split(filename)
-        img_final.save(os.path.join(output_dir,tail))
 
-        #Load the ecg image
-        plt.close('all')
-        plt.close(fig)
-        plt.clf()
-        plt.cla()
-        
-        os.remove('HandwrittenText.png')
-        outfile = os.path.join(output_dir,tail)
-        return outfile
+def _choose_words(text: str, num_words: int, explicit_text: str | None = None) -> list[str]:
+    if explicit_text:
+        words = [chunk.strip() for chunk in explicit_text.split(",") if chunk.strip()]
+        if words:
+            return words[:num_words]
+
+    candidates = _extract_with_spacy(text)
+    if not candidates:
+        candidates = _extract_with_regex(text)
+    if not candidates:
+        candidates = ["sinus rhythm", "normal ecg", "qrs narrow", "st changes"]
+
+    return random.choices(candidates, k=max(1, num_words))
+
+
+def _load_font(font_size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+    font_candidates = [
+        Path("Fonts") / "Times_New_Roman.ttf",
+        Path("Fonts") / "Arial_Italic.ttf",
+        Path("Fonts") / "Verdana_Italic.ttf",
+    ]
+
+    for font_path in font_candidates:
+        if font_path.exists():
+            try:
+                return ImageFont.truetype(str(font_path), size=font_size)
+            except OSError:
+                continue
+    return ImageFont.load_default()
+
+
+def _render_handwritten_text(words: Iterable[str], width: int, height: int) -> Image.Image:
+    canvas = Image.new("L", (width, height), color=255)
+    draw = ImageDraw.Draw(canvas)
+    base_size = max(18, min(width, height) // 8)
+    font = _load_font(base_size)
+    y = max(8, base_size // 3)
+
+    for word in words:
+        text = str(word).strip()
+        if not text:
+            continue
+
+        line_font = _load_font(max(16, int(base_size * random.uniform(0.9, 1.15))))
+        bbox = draw.textbbox((0, 0), text, font=line_font)
+        text_width = max(1, bbox[2] - bbox[0])
+        text_height = max(1, bbox[3] - bbox[1])
+        x = random.randint(5, max(5, width - text_width - 5))
+        jittered = Image.new("L", (text_width + 20, text_height + 20), color=255)
+        jitter_draw = ImageDraw.Draw(jittered)
+
+        # Multiple slightly shifted strokes produce a handwritten-looking pen trace.
+        for _ in range(random.randint(2, 4)):
+            dx = random.randint(-1, 1)
+            dy = random.randint(-1, 1)
+            jitter_draw.text((10 + dx, 10 + dy), text, font=line_font, fill=random.randint(0, 45))
+
+        angle = random.uniform(-8, 8)
+        jittered = jittered.rotate(angle, expand=True, fillcolor=255, resample=Image.Resampling.BICUBIC)
+        jittered = jittered.filter(ImageFilter.GaussianBlur(radius=random.uniform(0.2, 0.6)))
+
+        paste_y = min(y, max(0, height - jittered.height))
+        paste_x = min(x, max(0, width - jittered.width))
+        canvas.paste(ImageChops.darker(canvas.crop((paste_x, paste_y, paste_x + jittered.width, paste_y + jittered.height)), jittered), (paste_x, paste_y))
+
+        y += jittered.height + random.randint(4, max(6, base_size // 3))
+        if y >= height - base_size:
+            break
+
+    return canvas
+
+
+def _overlay_text(base_image: Image.Image, mask: Image.Image, x_offset: int, y_offset: int) -> Image.Image:
+    base = np.asarray(base_image.convert("RGB")).copy()
+    mask_rgb = np.repeat(np.asarray(mask)[..., None], 3, axis=2)
+    binary_mask = (mask_rgb >= 250).astype(np.uint8)
+
+    x_start = max(0, x_offset)
+    y_start = max(0, y_offset)
+    x_end = min(base.shape[0], x_offset + binary_mask.shape[0])
+    y_end = min(base.shape[1], y_offset + binary_mask.shape[1])
+
+    if x_start >= x_end or y_start >= y_end:
+        return Image.fromarray(base)
+
+    mask_x_start = x_start - x_offset
+    mask_y_start = y_start - y_offset
+    mask_x_end = mask_x_start + (x_end - x_start)
+    mask_y_end = mask_y_start + (y_end - y_start)
+
+    crop = binary_mask[mask_x_start:mask_x_end, mask_y_start:mask_y_end, :]
+    base[x_start:x_end, y_start:y_end, :] *= crop
+    return Image.fromarray(base)
+
+
+def get_handwritten(
+    link,
+    num_words,
+    input_file,
+    output_dir,
+    x_offset=0,
+    y_offset=0,
+    handwriting_size_factor=0.2,
+    model_path=None,
+    text=None,
+    style=None,
+    bias=1.0,
+    force=False,
+    animation=False,
+    noinfo=True,
+    save=None,
+    bbox=False,
+):
+    del model_path, style, bias, force, animation, noinfo, save, bbox
+
+    source_text = _load_text_source(link)
+    words = _choose_words(source_text, num_words=num_words, explicit_text=text)
+
+    img_ecg = Image.open(input_file).convert("RGB")
+    overlay_width = max(32, int(np.floor(img_ecg.size[0] * handwriting_size_factor)))
+    overlay_height = max(32, int(np.floor(img_ecg.size[1] * handwriting_size_factor)))
+
+    handwritten_mask = _render_handwritten_text(words, width=overlay_width, height=overlay_height)
+    img_final = _overlay_text(img_ecg, handwritten_mask, x_offset=x_offset, y_offset=y_offset)
+
+    _, tail = os.path.split(input_file)
+    outfile = os.path.join(output_dir, tail)
+    img_final.save(outfile)
+    return outfile
+
