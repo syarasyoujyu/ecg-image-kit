@@ -4,7 +4,7 @@ import random
 import re
 from pathlib import Path
 from sys import platform
-from typing import Iterable
+from typing import Iterable, List, Optional, Union
 
 import numpy as np
 import requests
@@ -123,7 +123,7 @@ def _load_text_source(link: str) -> str:
         return " ".join(line.strip() for line in file if line.strip())
 
 
-def _extract_with_spacy(text: str) -> list[str]:
+def _extract_with_spacy(text: str) -> List[str]:
     if spacy is None:
         return []
 
@@ -141,7 +141,7 @@ def _extract_with_spacy(text: str) -> list[str]:
     return entities
 
 
-def _extract_with_regex(text: str) -> list[str]:
+def _extract_with_regex(text: str) -> List[str]:
     tokens = re.findall(r"[A-Za-z][A-Za-z0-9\-_/]{1,}", text.lower())
     candidates = []
     for token in tokens:
@@ -150,7 +150,7 @@ def _extract_with_regex(text: str) -> list[str]:
     return candidates
 
 
-def _choose_words(text: str, num_words: int, explicit_text: str | None = None) -> list[str]:
+def _choose_words(text: str, num_words: int, explicit_text: Optional[str] = None) -> List[str]:
     if explicit_text:
         words = [chunk.strip() for chunk in explicit_text.split(",") if chunk.strip()]
         if words:
@@ -165,7 +165,7 @@ def _choose_words(text: str, num_words: int, explicit_text: str | None = None) -
     return random.choices(candidates, k=max(1, num_words))
 
 
-def _load_font(font_size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+def _load_font(font_size: int) -> Union[ImageFont.FreeTypeFont, ImageFont.ImageFont]:
     font_candidates = [
         Path("Fonts") / "Times_New_Roman.ttf",
         Path("Fonts") / "Arial_Italic.ttf",
@@ -279,4 +279,3 @@ def get_handwritten(
     outfile = os.path.join(output_dir, tail)
     img_final.save(outfile)
     return outfile
-

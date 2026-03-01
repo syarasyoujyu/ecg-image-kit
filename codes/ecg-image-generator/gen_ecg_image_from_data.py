@@ -82,7 +82,6 @@ def get_parser():
     parser.add_argument('--wrinkles',action='store_true',default=False)
     parser.add_argument('--augment',action='store_true',default=False)
     parser.add_argument('--lead_bbox',action='store_true',default=False)
-
     return parser
 
 def writeCSV(args):
@@ -101,8 +100,8 @@ def writeCSV(args):
                 writer.writerow(["filename","xgrid","ygrid","lead_name","start","end"])
 
 def run_single_file(args):
-        if hasattr(args, 'st') == True:
-            random.seed(args.seed)
+        random.seed(args.seed)
+        if not hasattr(args, 'encoding'):
             args.encoding = args.input_file
 
         filename = args.input_file
